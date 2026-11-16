@@ -160,6 +160,10 @@ class VideoCodecContext(CodecContext):
             )
 
         if vframe.ptr.pts == lib.AV_NOPTS_VALUE:
+            # Don't stamp pts onto the caller's frame; work on a
+            # reference-counted copy instead.
+            if vframe is input:
+                vframe = vframe._copy_ref()
             vframe.ptr.pts = self.ptr.frame_num
 
         return [vframe]

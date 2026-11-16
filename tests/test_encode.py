@@ -193,6 +193,69 @@ class TestBasicVideoEncoding(TestCase):
         with av.open(path) as input:
             assert_rgb_rotate(self, input)
 
+    def test_encode_does_not_mutate_time_base(self) -> None:
+        """
+        Encoding must not modify the caller's time_base: the frames keep the
+        pts/time_base they were given, the stream's time_base is unchanged by
+        ``encode()``, and re-encoding the same frame sequence produces the
+        same monotonic packet timestamps.
+        """
+        frame_time_base = Fraction(1, 1000)
+        frame_pts = [0, 40, 80, 120, 160]
+
+        def make_frames() -> list[VideoFrame]:
+            frames = []
+            for pts in frame_pts:
+                frame = VideoFrame(64, 64, "yuv420p")
+                frame.pts = pts
+                frame.time_base = frame_time_base
+                frames.append(frame)
+            return frames
+
+        def encode(frames: list[VideoFrame]) -> list[tuple[int, int]]:
+            file = io.BytesIO()
+            with av.open(file, "w", format="mp4") as output:
+                stream = output.add_stream("mpeg4", rate=25, time_base=Fraction(1, 25))
+                # Match the frames exactly so they reach the encoder as-is.
+                stream.width = 64
+                stream.height = 64
+                stream.pix_fmt = "yuv420p"
+                stream_time_base = stream.time_base
+
+                packets = []
+                for frame in frames:
+                    packets += stream.encode(frame)
+                    # encode() does not touch the stream's time_base.
+                    assert stream.time_base == stream_time_base
+                packets += stream.encode(None)
+                assert stream.time_base == stream_time_base
+
+                for packet in packets:
+                    output.mux(packet)
+
+            timestamps = []
+            for packet in packets:
+                assert packet.pts is not None and packet.dts is not None
+                timestamps.append((packet.pts, packet.dts))
+            return timestamps
+
+        frames = make_frames()
+        first = encode(frames)
+
+        # The caller's frames were not mutated by encoding.
+        for frame, pts in zip(frames, frame_pts):
+            assert frame.pts == pts
+            assert frame.time_base == frame_time_base
+
+        # Re-encoding the same frame sequence gives the same timestamps.
+        assert encode(frames) == first
+
+        # pts and dts are monotonically increasing.
+        pts_seq = [pts for pts, _ in first]
+        dts_seq = [dts for _, dts in first]
+        assert all(b > a for a, b in zip(pts_seq, pts_seq[1:]))
+        assert all(b > a for a, b in zip(dts_seq, dts_seq[1:]))
+
 
 class TestBasicAudioEncoding(TestCase):
     def test_default_options(self) -> None:

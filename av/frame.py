@@ -83,6 +83,30 @@ class Frame:
 
         self._time_base = dst
 
+    @cython.cfunc
+    def _copy_ref(self) -> Frame:
+        """A reference-counted shallow copy of this frame.
+
+        The copy shares this frame's buffers, so it is cheap, but its
+        attributes (pts, time_base, ...) may be changed without affecting
+        this frame. Encoding uses this to avoid mutating the caller's frames.
+        """
+        copy: Frame = type(self)()
+        err_check(lib.av_frame_ref(copy.ptr, self.ptr))
+        copy._time_base = self._time_base
+        return copy
+
+    @cython.cfunc
+    def _rebased_copy(self, dst: lib.AVRational) -> Frame:
+        """A reference-counted copy of this frame, rebased to ``dst``.
+
+        Unlike :meth:`_rebase_time`, the caller's frame keeps its own
+        pts, duration and time_base.
+        """
+        copy: Frame = self._copy_ref()
+        copy._rebase_time(dst)
+        return copy
+
     @property
     def dts(self):
         """

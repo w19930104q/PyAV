@@ -705,13 +705,19 @@ class CodecContext:
 
         frames = self._prepare_frames_for_encode(frame)
 
-        # Assert the frames are in our time base.
-        # TODO: Don't mutate time.
+        # Assert the frames are in our time base. Rebase a reference-counted
+        # copy rather than the frame itself, so the frames the caller holds
+        # keep their own pts, duration and time_base.
+        rebased_frames: list[Frame | None] = []
         for frame in frames:
-            if frame is not None:
-                frame._rebase_time(self.ptr.time_base)
+            if frame is not None and (
+                frame._time_base.num != self.ptr.time_base.num
+                or frame._time_base.den != self.ptr.time_base.den
+            ):
+                frame = frame._rebased_copy(self.ptr.time_base)
+            rebased_frames.append(frame)
 
-        return frames
+        return rebased_frames
 
     @cython.ccall
     def encode(self, frame: Frame | None = None):
